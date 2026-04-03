@@ -1,0 +1,5 @@
+pip install pytest allure-pytest
+
+pytest math_tests.py --alluredir=allure-results -v
+
+allure serve ./allure-results
