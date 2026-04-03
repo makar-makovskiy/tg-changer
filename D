@@ -1,0 +1,12 @@
+import allure
+import pytest
+
+class TestMath:
+    def tests(self):
+        with allure.step("Объявляем переменные"):
+            a = 2
+            b = 2
+        with allure.step("Возвращаем сумму в result"):
+            result = a + b
+        with allure.step("Проверяем результат"):
+            assert result == 4, f"Ошибка сложения: {a} + {b} = {result}, ожидалось 4"
