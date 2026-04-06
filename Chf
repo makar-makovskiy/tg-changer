@@ -1,0 +1,135 @@
+Для реализации данной лабораторной работы мы разделим проект на две части: логику генератора (модуль, который считает деньги и строит строку) и автотесты с использованием pytest и Allure.
+1. Реализация модуля (receipt_generator.py)
+Этот модуль отвечает за бизнес-логику. Мы создадим класс, который валидирует данные и выполняет расчеты.
+from datetime import datetime
+
+class ReceiptGenerator:
+    def __init__(self, items, discount_pct=0, tax_pct=20, payment_method="Наличные"):
+        self.validate_input(items, discount_pct)
+        self.items = items
+        self.discount_pct = discount_pct
+        self.tax_pct = tax_pct
+        self.payment_method = payment_method
+
+    def validate_input(self, items, discount):
+        if not items:
+            raise ValueError("Корзина пуста")
+        if discount > 50:
+            raise ValueError("Скидка не может быть более 50%")
+        for item in items:
+            if item['price'] < 0 or item['quantity'] <= 0:
+                raise ValueError("Некорректная цена или количество")
+
+    def calculate_totals(self):
+        subtotal = sum(item['price'] * item['quantity'] for item in self.items)
+        discount_amount = round(subtotal * (self.discount_pct / 100), 2)
+        total_no_tax = subtotal - discount_amount
+        tax_amount = round(total_no_tax * (self.tax_pct / 100), 2)
+        total_final = total_no_tax + tax_amount
+        
+        return {
+            "subtotal": subtotal,
+            "discount": discount_amount,
+            "total_no_tax": total_no_tax,
+            "tax": tax_amount,
+            "total": total_final
+        }
+
+    def generate_text_receipt(self):
+        totals = self.calculate_totals()
+        now = datetime.now().strftime("%d.%m.%Y %H:%M")
+        
+        lines = [
+            "СПОРТИВНЫЙ КОМПЛЕКС \"ОЛИМПИЯ\"",
+            f"Дата: {now}    Чек №: 2041",
+            "-" * 41,
+            f"{'Услуга':<20} {'Кол-во':<7} {'Цена':<7} {'Сумма'}",
+        ]
+        
+        for item in self.items:
+            sum_item = item['price'] * item['quantity']
+            lines.append(f"{item['name'][:19]:<20} {item['quantity']:<7} {item['price']:<7} {sum_item}")
+            
+        lines.extend([
+            "-" * 41,
+            f"Подытог: {totals['subtotal']:>31}",
+            f"Скидка ({self.discount_pct}%): {f'-{totals.get('discount')}':>27}",
+            f"Итого без НДС: {totals['total_no_tax']:>26}",
+            f"НДС ({self.tax_pct}%): {totals['tax']:>29}",
+            "=" * 41,
+            f"К ОПЛАТЕ: {totals['total']:>26.2f} ₽",
+            f"Способ оплаты: {self.payment_method}",
+            "Спасибо за визит!",
+            "=" * 41
+        ])
+        return "\n".join(lines)
+
+2. Автотесты (tests/test_receipt.py)
+Здесь мы используем декораторы Allure для структурирования отчета.
+import pytest
+import allure
+from receipt_generator import ReceiptGenerator
+
+@allure.feature("Кассовый модуль")
+class TestReceipt:
+
+    @allure.story("Расчёт стоимости")
+    @allure.severity(allure.severity_level.CRITICAL)
+    @pytest.mark.parametrize("items, discount, expected_total", [
+        ([{"name": "Бассейн", "quantity": 2, "price": 500}], 10, 1080.0), # (1000 - 100) + 20%
+        ([{"name": "Тренажер", "quantity": 1, "price": 1000}], 0, 1200.0), # 1000 + 20%
+    ])
+    def test_calculation_logic(self, items, discount, expected_total):
+        with allure.step("Инициализация генератора и расчет"):
+            rg = ReceiptGenerator(items, discount_pct=discount)
+            result = rg.calculate_totals()
+        
+        with allure.step(f"Проверка итоговой суммы: ожидаем {expected_total}"):
+            assert result["total"] == expected_total
+
+    @allure.story("Валидация")
+    @pytest.mark.parametrize("items, discount, error_msg", [
+        ([], 0, "Корзина пуста"),
+        ([{"name": "Х", "quantity": 1, "price": -100}], 0, "Некорректная цена"),
+        ([{"name": "Х", "quantity": 1, "price": 100}], 51, "Скидка не может быть более 50%"),
+    ])
+    def test_validation_errors(self, items, discount, error_msg):
+        with allure.step("Проверка выброса исключения при некорректных данных"):
+            with pytest.raises(ValueError) as excinfo:
+                ReceiptGenerator(items, discount_pct=discount)
+            assert error_msg in str(excinfo.value)
+
+    @allure.story("Генерация чека")
+    def test_payment_methods(self):
+        items = [{"name": "Групповое занятие", "quantity": 1, "price": 800}]
+        
+        with allure.step("Создание чека с безналичным расчетом"):
+            rg = ReceiptGenerator(items, payment_method="Безналичный расчет")
+            receipt = rg.generate_text_receipt()
+            assert "Способ оплаты: Безналичный расчет" in receipt
+            allure.attach(receipt, name="Текстовый чек", attachment_type=allure.attachment_type.TEXT)
+
+    @allure.story("Граничные случаи")
+    def test_edge_cases(self):
+        with allure.step("Длинное название услуги"):
+            items = [{"name": "Очень длинное название услуги которое должно обрезаться", "quantity": 1, "price": 100}]
+            rg = ReceiptGenerator(items)
+            receipt = rg.generate_text_receipt()
+            assert "Очень длинное назван" in receipt # Проверка обрезки в 20 символов
+        
+        with allure.step("0% налог"):
+            rg = ReceiptGenerator([{"name": "Услуга", "quantity": 1, "price": 100}], tax_pct=0)
+            assert rg.calculate_totals()["tax"] == 0
+
+3. Инструкция по запуску
+Для генерации и просмотра красивого отчета Allure выполните следующие команды:
+ * Запуск тестов с генерацией данных для Allure:
+   pytest --alluredir=allure-results
+
+ * Генерация и открытие HTML-отчета:
+   allure serve allure-results
+
+Особенности реализации:
+ * Иерархия: Все тесты разбиты по feature и story, что позволяет в отчете сразу увидеть, какой функционал сломан.
+ * Степы: Внутри тестов используются with allure.step, чтобы в отчете было видно детальное прохождение каждого этапа.
+ * Аттачменты: В тесте генерации чека я добавил allure.attach, чтобы в самом отчете Allure можно было открыть и посмотреть, как выглядит сформированный текст чека.
